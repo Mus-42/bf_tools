@@ -1,16 +1,23 @@
-use crate::ins::{BfIns, BfCode};
+use crate::ins::{BfCode, BfIns};
 
 /// Error type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BfParseError {
     /// Can occur in cases like: ``[+]]``
-    UnmatchedClosingBracket { 
+    UnmatchedClosingBracket {
         /// unmatched bracket position
-        char_pos: usize
+        char_pos: usize,
     },
     /// Can occur in cases like:  ``[[+]``
-    UnclosedBracket
+    UnclosedBracket,
 }
+
+impl std::fmt::Display for BfParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self)) // TODO
+    }
+}
+impl std::error::Error for BfParseError {}
 
 /// # Parse sequence of chars into [`BfCode`] object
 /// example:
@@ -75,9 +82,7 @@ pub fn parse_chars(chars: impl Iterator<Item = char>) -> Result<BfCode, BfParseE
                     if let Some(last) = loops_stack.last_mut() {
                         last.push(BfIns::Loop(inner));
                     } else {
-                        return Err(BfParseError::UnmatchedClosingBracket {
-                            char_pos: pos
-                        });
+                        return Err(BfParseError::UnmatchedClosingBracket { char_pos: pos });
                     }
                 } else {
                     unreachable!();
@@ -99,7 +104,8 @@ pub fn parse_chars(chars: impl Iterator<Item = char>) -> Result<BfCode, BfParseE
         unreachable!()
     }
 }
-/// # parse bf instructions from iterator without grooping
+/// parse bf instructions from iterator without grouping
+/// 
 /// example:
 /// ```
 /// # use bf_tools::{ bf, ins_parser::parse_str };
@@ -111,7 +117,9 @@ pub fn parse_chars(chars: impl Iterator<Item = char>) -> Result<BfCode, BfParseE
 /// return `Err` if string contains invalid bracket sequense like `]]` (all others strings is valid bf code)
 #[inline]
 pub fn parse_str<'a, T>(s: T) -> Result<BfCode, BfParseError>
-    where T: Into<&'a str> {
+where
+    T: Into<&'a str>,
+{
     parse_chars(s.into().chars())
 }
 
