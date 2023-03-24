@@ -1,7 +1,7 @@
 use crate::ins::{BfCode, BfIns};
 
 /// Error type
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BfParseError {
     /// Can occur in cases like: ``[+]]``
     UnmatchedClosingBracket {
@@ -31,56 +31,56 @@ impl std::error::Error for BfParseError {}
 /// return `Err` if string contains invalid bracket sequense like `]]` (all others strings is valid bf code)
 pub fn parse_chars(chars: impl Iterator<Item = char>) -> Result<BfCode, BfParseError> {
     let mut loops_stack = Vec::new();
-    loops_stack.push(Vec::new());
+    loops_stack.push(BfCode(Vec::new()));
     for (pos, ch) in chars.enumerate() {
         match ch {
             '+' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::Add(1));
+                    last.0.push(BfIns::Add(1));
                 } else {
                     unreachable!();
                 }
             }
             '-' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::Sub(1));
+                    last.0.push(BfIns::Sub(1));
                 } else {
                     unreachable!();
                 }
             }
             '>' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::PtrAdd(1));
+                    last.0.push(BfIns::PtrAdd(1));
                 } else {
                     unreachable!();
                 }
             }
             '<' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::PtrSub(1));
+                    last.0.push(BfIns::PtrSub(1));
                 } else {
                     unreachable!();
                 }
             }
             '.' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::Putchar);
+                    last.0.push(BfIns::Putchar);
                 } else {
                     unreachable!();
                 }
             }
             ',' => {
                 if let Some(last) = loops_stack.last_mut() {
-                    last.push(BfIns::Getchar);
+                    last.0.push(BfIns::Getchar);
                 } else {
                     unreachable!();
                 }
             }
-            '[' => loops_stack.push(Vec::new()),
+            '[' => loops_stack.push(BfCode(Vec::new())),
             ']' => {
                 if let Some(inner) = loops_stack.pop() {
                     if let Some(last) = loops_stack.last_mut() {
-                        last.push(BfIns::Loop(inner));
+                        last.0.push(BfIns::Loop(inner));
                     } else {
                         return Err(BfParseError::UnmatchedClosingBracket { char_pos: pos });
                     }
@@ -98,14 +98,14 @@ pub fn parse_chars(chars: impl Iterator<Item = char>) -> Result<BfCode, BfParseE
         if loops.next().is_some() {
             Err(BfParseError::UnclosedBracket)
         } else {
-            Ok(BfCode(ins))
+            Ok(ins)
         }
     } else {
         unreachable!()
     }
 }
 /// parse bf instructions from iterator without grouping
-/// 
+///
 /// example:
 /// ```
 /// # use bf_tools::{ bf, ins_parser::parse_str };

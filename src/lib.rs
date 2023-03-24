@@ -7,6 +7,8 @@
 //TODO ...
 
 #![warn(missing_docs)]
+#![warn(missing_debug_implementations)]
+#![warn(missing_copy_implementations)]
 #![warn(clippy::missing_const_for_fn)]
 #![warn(clippy::missing_errors_doc)]
 #![warn(clippy::missing_panics_doc)]
@@ -28,9 +30,15 @@ pub mod ins_parser;
 
 /// Optimization passes collection
 /// ```
-/// # use bf_tools::{ bf, optimizer::OptState };
+/// # use bf_tools::{ bf, ins::BfCode, optimizer::OptState };
 /// let code = bf!(+-[-]<>[-]);
-/// let code = OptState::default().run_passes(code);
+/// let code = BfCode::from(
+///     OptState::default()
+///     .run_passes(code.into())
+/// );
 /// assert_eq!(code, bf!([-]));
 /// ```
 pub mod optimizer;
+
+/// Interpreter for BF code
+pub mod interpreter;

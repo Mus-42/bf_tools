@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 /// Single BF instruction
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BfIns {
@@ -23,7 +21,7 @@ pub enum BfIns {
     Getchar,
     /// repeat inner instruction while value of current cell != to 0
     /// `[` inner `]` in bf
-    Loop(Vec<BfIns>),
+    Loop(BfCode),
 }
 
 /// Collection of [`BfIns`] instructions
@@ -33,27 +31,19 @@ pub struct BfCode(pub Vec<BfIns>);
 impl BfCode {
     /// bf code length in [`BfIns`] instructions
     /// ```
-    /// # use bf_tools::{ bf, optimizer::{ OptPass, passes::PassUseless } };
+    /// # use bf_tools::{ bf, optimizer::{ OptPass } };
     /// // code without grouping (produced by bf macro)
     /// let code = bf!(+++[-]>,<+);
     /// assert_eq!(code.ins_len(), 9);
-    /// // groop same code using basic Useless pass
-    /// let mut is_changed = false;
-    /// let code = PassUseless.optimize(code, &mut is_changed);
-    /// assert!(is_changed);
-    /// assert_eq!(code.ins_len(), 7);
     /// ```
     #[inline]
     pub fn ins_len(&self) -> usize {
-        fn ins_len_impl(ins: &[BfIns]) -> usize {
-            ins.iter().fold(0, |v, i| {
-                v + match i {
-                    BfIns::Loop(inner) => 1 + ins_len_impl(inner),
-                    _ => 1,
-                }
-            })
-        }
-        ins_len_impl(&self.0)
+        self.0.iter().fold(0, |v, i| {
+            v + match i {
+                BfIns::Loop(inner) => 1 + inner.ins_len(),
+                _ => 1,
+            }
+        })
     }
     /// bf code length in characters
     /// ```
@@ -62,46 +52,41 @@ impl BfCode {
     /// ```
     #[inline]
     pub fn chars_len(&self) -> usize {
-        fn ins_len_impl(ins: &[BfIns]) -> usize {
-            ins.iter().fold(0, |v, i| {
-                v + match i {
-                    BfIns::Loop(inner) => 2 + ins_len_impl(inner),
-                    BfIns::Add(v) | BfIns::Sub(v) => *v as usize,
-                    BfIns::PtrAdd(v) | BfIns::PtrSub(v) => *v,
-                    BfIns::Getchar | BfIns::Putchar => 1,
-                }
-            })
-        }
-        ins_len_impl(&self.0)
+        self.0.iter().fold(0, |v, i| {
+            v + match i {
+                BfIns::Loop(inner) => 2 + inner.chars_len(),
+                BfIns::Add(v) | BfIns::Sub(v) => *v as usize,
+                BfIns::PtrAdd(v) | BfIns::PtrSub(v) => *v,
+                BfIns::Getchar | BfIns::Putchar => 1,
+            }
+        })
     }
 }
 
 impl std::fmt::Display for BfCode {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fn fmt_impl(ins: &[BfIns], f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            for i in ins {
-                let (ch, cnt) = match i {
-                    BfIns::Add(cnt) => ('+', *cnt as usize),
-                    BfIns::Sub(cnt) => ('-', *cnt as usize),
-                    BfIns::PtrAdd(cnt) => ('>', *cnt),
-                    BfIns::PtrSub(cnt) => ('<', *cnt),
-                    BfIns::Putchar => ('.', 1),
-                    BfIns::Getchar => (',', 1),
-                    BfIns::Loop(iner) => {
-                        f.write_char('[')?;
-                        fmt_impl(iner, f)?;
-                        f.write_char(']')?;
-                        continue;
-                    }
-                };
-                for _ in 0..cnt {
-                    f.write_char(ch)?;
+        use std::fmt::Write;
+        for i in &self.0 {
+            let (ch, cnt) = match i {
+                BfIns::Add(cnt) => ('+', *cnt as usize),
+                BfIns::Sub(cnt) => ('-', *cnt as usize),
+                BfIns::PtrAdd(cnt) => ('>', *cnt),
+                BfIns::PtrSub(cnt) => ('<', *cnt),
+                BfIns::Putchar => ('.', 1),
+                BfIns::Getchar => (',', 1),
+                BfIns::Loop(iner) => {
+                    f.write_char('[')?;
+                    iner.fmt(f)?;
+                    f.write_char(']')?;
+                    continue;
                 }
+            };
+            for _ in 0..cnt {
+                f.write_char(ch)?;
             }
-            Ok(())
         }
-        fmt_impl(&self.0, f)
+        Ok(())
     }
 }
 /// Creates [`BfCode`] object from
@@ -111,7 +96,7 @@ impl std::fmt::Display for BfCode {
 /// # use bf_tools::{ ins::{ BfIns, BfCode }, bf };
 /// assert_eq!(
 ///     bf!(+[-]),
-///     BfCode(vec![BfIns::Add(1), BfIns::Loop(vec![BfIns::Sub(1)])])
+///     BfCode(vec![BfIns::Add(1), BfIns::Loop(BfCode(vec![BfIns::Sub(1)]))])
 /// );
 /// ```
 #[macro_export]
@@ -173,7 +158,7 @@ macro_rules! bf_impl {
         $name.push($crate::ins::BfIns::Getchar)
     };
     ($name:ident [$($t:tt)*]) => {
-        $name.push($crate::ins::BfIns::Loop(bf!($($t)*).0));
+        $name.push($crate::ins::BfIns::Loop(bf!($($t)*)));
     };
     ($($t:tt)*) => {
         compile_error!(concat!("invalid token given to `bf` macro: ", $($t)*));
