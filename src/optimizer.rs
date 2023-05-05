@@ -97,60 +97,73 @@ pub mod opt_ins {
         Loop(OptCode),
         /// Block without loops inside
         Block(BasicBlock),
+        /// IO instruction
+        IOIns(IOOptIns),
     }
 
-    /// Block without loops inside & precalculated offset
+    /// IO instruction 
+    /// 
+    /// Can't be reordered with other io instructions / simplified in other way
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum IOOptIns {
+        /// Print current cell value (as u8) to output stream
+        Putchar(isize),
+        /// Replace current cell value with value from input stream
+        Getchar(isize),
+    }
+
+    /// Block of cell changes with precalculated offset
     #[derive(Debug, Clone)]
     pub struct BasicBlock {
-        /// Ptr offset per block
+        /// Data poiner offset per block
+        /// 
+        /// this offset applied after executing all block instructions
         pub ptr_offset: isize,
-        /// vec of instruction for each offset
-        pub ins: BTreeMap<isize, Vec<OptIns>>,
-    }
-
-    /// Instruction for optimizer
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum OptIns {
-        /// wrapping add value to current cell
-        Add(u8),
-        /// wrapping sub value from current cell
-        Sub(u8),
-        /// print current cell value (as u8) to output stream
-        Putchar,
-        /// replace current cell value with value from input stream
-        Getchar,
+        /// Cell change for each offset
+        pub ins: BTreeMap<isize, u8>,
     }
 
     impl From<BfCode> for OptCode {
         fn from(value: BfCode) -> Self {
             let mut offset = 0isize;
             let mut cells = BTreeMap::new();
-            let add_cell = |offset, ins, cells: &mut BTreeMap<isize, Vec<OptIns>>| {
+            let add_cell = |offset, val, cells: &mut BTreeMap<isize, u8>| {
                 if let Some(v) = cells.get_mut(&offset) {
-                    v.push(ins);
+                    *v = v.wrapping_add(val);
                 } else {
-                    cells.insert(offset, vec![ins]);
+                    cells.insert(offset, val);
                 }
             };
             let mut res = Vec::new();
+            macro_rules! push_cells {
+                ($cond:expr) => {
+                    if $cond {
+                        let mut ins = BTreeMap::new();
+                        std::mem::swap(&mut ins, &mut cells);
+                        res.push(OptBlock::Block(BasicBlock {
+                            ptr_offset: offset,
+                            ins,
+                        }));
+                        offset = 0;
+                    }
+                };
+            }
             for ins in value.0 {
                 match ins {
-                    BfIns::Add(val) => add_cell(offset, OptIns::Add(val), &mut cells),
-                    BfIns::Sub(val) => add_cell(offset, OptIns::Sub(val), &mut cells),
+                    BfIns::Add(val) => add_cell(offset, val, &mut cells),
+                    BfIns::Sub(val) => add_cell(offset, 0u8.wrapping_sub(val), &mut cells),
                     BfIns::PtrAdd(d) => offset += d as isize,
                     BfIns::PtrSub(d) => offset -= d as isize,
-                    BfIns::Putchar => add_cell(offset, OptIns::Putchar, &mut cells),
-                    BfIns::Getchar => add_cell(offset, OptIns::Getchar, &mut cells),
+                    BfIns::Putchar => {
+                        push_cells!(!cells.is_empty());
+                        res.push(OptBlock::IOIns(IOOptIns::Putchar(offset)));
+                    },
+                    BfIns::Getchar => {
+                        push_cells!(!cells.is_empty());
+                        res.push(OptBlock::IOIns(IOOptIns::Getchar(offset)));
+                    },
                     BfIns::Loop(inner) => {
-                        if !cells.is_empty() || offset != 0 {
-                            let mut ins = BTreeMap::new();
-                            std::mem::swap(&mut ins, &mut cells);
-                            res.push(OptBlock::Block(BasicBlock {
-                                ptr_offset: offset,
-                                ins,
-                            }));
-                            offset = 0;
-                        }
+                        push_cells!(!cells.is_empty() || offset != 0);
                         res.push(OptBlock::Loop(inner.into()));
                     }
                 }
@@ -168,12 +181,30 @@ pub mod opt_ins {
     impl From<OptCode> for BfCode {
         fn from(value: OptCode) -> Self {
             let mut code = Vec::new();
+            let mut offset = 0isize;
             for v in value.0 {
                 match v {
                     OptBlock::Loop(inner) => code.push(BfIns::Loop(BfCode::from(inner))),
+                    OptBlock::IOIns(ins) => {
+                        let new_offset = match ins {
+                            IOOptIns::Putchar(offset) | IOOptIns::Getchar(offset) => offset
+                        };
+                        if offset != new_offset {
+                            let d = new_offset - offset;
+                            offset = new_offset;
+                            if d > 0 {
+                                code.push(BfIns::PtrAdd(d as usize));
+                            } else {
+                                code.push(BfIns::PtrSub(-d as usize));
+                            }
+                        }
+                        code.push(match ins {
+                            IOOptIns::Putchar(_) => BfIns::Putchar,
+                            IOOptIns::Getchar(_) => BfIns::Getchar,
+                        });
+                    }
                     OptBlock::Block(bb) => {
-                        let mut offset = 0isize;
-                        for (new_offset, ins) in bb.ins {
+                        for (new_offset, val) in bb.ins {
                             if offset != new_offset {
                                 let d = new_offset - offset;
                                 offset = new_offset;
@@ -183,14 +214,7 @@ pub mod opt_ins {
                                     code.push(BfIns::PtrSub(-d as usize));
                                 }
                             }
-                            for v in ins {
-                                code.push(match v {
-                                    OptIns::Add(cnt) => BfIns::Add(cnt),
-                                    OptIns::Sub(cnt) => BfIns::Sub(cnt),
-                                    OptIns::Putchar => BfIns::Putchar,
-                                    OptIns::Getchar => BfIns::Getchar,
-                                });
-                            }
+                            code.push(if val < 128 { BfIns::Add(val) } else { BfIns::Sub(0u8.wrapping_sub(val)) });
                         }
                         if offset != bb.ptr_offset {
                             let d = bb.ptr_offset - offset;
@@ -200,6 +224,7 @@ pub mod opt_ins {
                                 code.push(BfIns::PtrSub(-d as usize));
                             }
                         }
+                        offset = 0;
                     }
                 }
             }
@@ -212,10 +237,9 @@ pub mod opt_ins {
         pub fn ins_len(&self) -> usize {
             self.0.iter().fold(0usize, |l, b| {
                 l + match b {
-                    OptBlock::Block(b) => {
-                        b.ins.iter().fold(0usize, |l, (_offset, ins)| l + ins.len())
-                    }
-                    OptBlock::Loop(inner) => inner.ins_len(),
+                    OptBlock::Block(b) => b.ins.len(),
+                    OptBlock::Loop(inner) => 1 + inner.ins_len(),
+                    OptBlock::IOIns(_) => 1
                 }
             })
         }
@@ -225,6 +249,7 @@ pub mod opt_ins {
             for ins in &self.0 {
                 match ins {
                     OptBlock::Block(bb) => offset += bb.ptr_offset,
+                    OptBlock::IOIns(_) => {}
                     OptBlock::Loop(inner) => {
                         //TODO fix for loops like [[-]]? (with single loop instruction inside)
                         if !matches!(inner.offset(), Some(0)) {
@@ -238,10 +263,8 @@ pub mod opt_ins {
         /// Check for Putchar|Getchar instructions in code block
         pub fn has_side_effects(&self) -> bool {
             self.0.iter().any(|b| match b {
-                OptBlock::Block(b) => b.ins.iter().any(|(_offset, ins)| {
-                    ins.iter()
-                        .any(|v| matches!(v, OptIns::Putchar | OptIns::Getchar))
-                }),
+                OptBlock::Block(_) => false,
+                OptBlock::IOIns(_) => true,
                 OptBlock::Loop(inner) => inner.has_side_effects(),
             })
         }

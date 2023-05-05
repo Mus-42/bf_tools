@@ -9,16 +9,18 @@ impl Interpreter<'_> {
         self.reserve_storage()?;
         //TODO target feature to disable offset checks?
         while ip < code.len() {
-            //println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
+            //println!("ip: {ip}, ins: {:?}, tape: {:?}, ptr: {:?}", &code[ip], &self.tape, self.data_pointer);
             match &code[ip] {
                 InterpIns::Set { val, offset } => {
                     if self.data_pointer < *offset as usize {
+                        println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
                         return Err(InterpreteError::InvalidOffset);
                     }
                     self.tape[self.data_pointer - *offset as usize] = *val;
                 }
                 InterpIns::Add { val, offset } => {
                     if self.data_pointer < *offset as usize {
+                        println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
                         return Err(InterpreteError::InvalidOffset);
                     }
                     self.tape[self.data_pointer - *offset as usize] =
@@ -26,6 +28,7 @@ impl Interpreter<'_> {
                 }
                 InterpIns::Sub { val, offset } => {
                     if self.data_pointer < *offset as usize {
+                        println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
                         return Err(InterpreteError::InvalidOffset);
                     }
                     self.tape[self.data_pointer - *offset as usize] =
@@ -33,6 +36,7 @@ impl Interpreter<'_> {
                 }
                 InterpIns::Mul { val, offset } => {
                     if self.data_pointer < *offset as usize {
+                        println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
                         return Err(InterpreteError::InvalidOffset);
                     }
                     self.tape[self.data_pointer - *offset as usize] =
@@ -54,34 +58,37 @@ impl Interpreter<'_> {
                     input_offset = *new_input_offset;
                 }
 
-                InterpIns::AddMove { to } => {
-                    if self.data_pointer < *to as usize || self.data_pointer < input_offset as usize
-                    {
+                InterpIns::AddMove { mul, to } => {
+                    if self.data_pointer < *to as usize || self.data_pointer < input_offset as usize {
+                        println!("ip: {ip}, ins: {:?}, tape: {:?}", &code[ip], &self.tape);
                         return Err(InterpreteError::InvalidOffset);
                     }
-                    self.tape[self.data_pointer - *to as usize] = self.tape
-                        [self.data_pointer - *to as usize]
-                        .wrapping_add(self.tape[self.data_pointer - input_offset as usize]);
+                    self.tape[self.data_pointer - *to as usize] =
+                        self.tape[self.data_pointer - *to as usize].wrapping_add(
+                            self.tape[self.data_pointer - input_offset as usize].wrapping_mul(*mul),
+                        );
                     self.tape[self.data_pointer - input_offset as usize] = 0;
                 }
-                InterpIns::SubMove { to } => {
+                InterpIns::SubMove { mul, to } => {
                     if self.data_pointer < *to as usize || self.data_pointer < input_offset as usize
                     {
                         return Err(InterpreteError::InvalidOffset);
                     }
-                    self.tape[self.data_pointer - *to as usize] += self.tape
-                        [self.data_pointer - *to as usize]
-                        .wrapping_sub(self.tape[self.data_pointer - input_offset as usize]);
+                    self.tape[self.data_pointer - *to as usize] =
+                        self.tape[self.data_pointer - *to as usize].wrapping_sub(
+                            self.tape[self.data_pointer - input_offset as usize].wrapping_mul(*mul),
+                        );
                     self.tape[self.data_pointer - input_offset as usize] = 0;
                 }
-                InterpIns::MulMove { to } => {
+                InterpIns::MulMove { mul, to } => {
                     if self.data_pointer < *to as usize || self.data_pointer < input_offset as usize
                     {
                         return Err(InterpreteError::InvalidOffset);
                     }
-                    self.tape[self.data_pointer - *to as usize] += self.tape
-                        [self.data_pointer - *to as usize]
-                        .wrapping_mul(self.tape[self.data_pointer - input_offset as usize]);
+                    self.tape[self.data_pointer - *to as usize] =
+                        self.tape[self.data_pointer - *to as usize].wrapping_mul(
+                            self.tape[self.data_pointer - input_offset as usize].wrapping_mul(*mul),
+                        );
                     self.tape[self.data_pointer - input_offset as usize] = 0;
                 }
                 InterpIns::Move { to } => {
@@ -106,17 +113,16 @@ impl Interpreter<'_> {
                         return Err(InterpreteError::InvalidOffset);
                     }
                     let ch = self.tape[self.data_pointer - *offset as usize];
-                    self.io_out.write(&[ch]).map_err(InterpreteError::IOError)?;
+                    self.io_out.putchar(ch).map_err(InterpreteError::IOError)?;
                 }
                 InterpIns::Getchar { offset } => {
                     if self.data_pointer < *offset as usize {
                         return Err(InterpreteError::InvalidOffset);
                     }
-                    let mut buf = [0u8; 1];
-                    self.io_in
-                        .read_exact(&mut buf)
+                    let ch = self.io_in
+                        .getchar()
                         .map_err(InterpreteError::IOError)?;
-                    self.tape[self.data_pointer - *offset as usize] = buf[0];
+                    self.tape[self.data_pointer - *offset as usize] = ch;
                 }
                 InterpIns::JmpT { dest } => {
                     if self.data_pointer < input_offset as usize {
@@ -143,6 +149,7 @@ impl Interpreter<'_> {
             }
             ip += 1;
         }
+        self.io_out.flush().map_err(InterpreteError::IOError)?;
         Ok(())
     }
     #[inline(always)]

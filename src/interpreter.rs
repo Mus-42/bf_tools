@@ -13,12 +13,11 @@ pub enum InterpIns {
     //TODO instructions for loops like [>] [<]?
 
     //TODO more register-like variables like input_offset?
-
     SetInputOffset { new_input_offset: u32 }, // input_offset = new_input_offset
 
-    AddMove { to: u32 }, // cells[ptr - to] += cells[ptr - input_offset]; cells[ptr - input_offset] = 0
-    SubMove { to: u32 }, // cells[ptr - to] -= cells[ptr - input_offset]; cells[ptr - input_offset] = 0
-    MulMove { to: u32 }, // cells[ptr - to] *= cells[ptr - input_offset]; cells[ptr - input_offset] = 0
+    AddMove { mul: u8, to: u32 }, // cells[ptr - to] += cells[ptr - input_offset] * mul; cells[ptr - input_offset] = 0
+    SubMove { mul: u8, to: u32 }, // cells[ptr - to] -= cells[ptr - input_offset] * mul; cells[ptr - input_offset] = 0
+    MulMove { mul: u8, to: u32 }, // cells[ptr - to] *= cells[ptr - input_offset] * mul; cells[ptr - input_offset] = 0
     Move { to: u32 }, // cells[ptr - to] = cells[ptr - input_offset]; cells[ptr - input_offset] = 0
     Copy { to: u32 }, // cells[ptr - to] = cells[ptr - input_offset];
 
@@ -58,14 +57,14 @@ impl std::fmt::Display for InterpCode {
                     f.write_fmt(format_args!("set_input_offset {new_input_offset}\n"))?
                 }
 
-                InterpIns::AddMove { to } => {
-                    f.write_fmt(format_args!("add_move [input_offset], [{to}]\n"))?
+                InterpIns::AddMove { mul, to } => {
+                    f.write_fmt(format_args!("add_move [input_offset]*{mul}, [{to}]\n"))?
                 }
-                InterpIns::SubMove { to } => {
-                    f.write_fmt(format_args!("sub_move [input_offset], [{to}]\n"))?
+                InterpIns::SubMove { mul, to } => {
+                    f.write_fmt(format_args!("sub_move [input_offset]*{mul}, [{to}]\n"))?
                 }
-                InterpIns::MulMove { to } => {
-                    f.write_fmt(format_args!("mul_move [input_offset], [{to}]\n"))?
+                InterpIns::MulMove { mul, to } => {
+                    f.write_fmt(format_args!("mul_move [input_offset]*{mul}, [{to}]\n"))?
                 }
                 InterpIns::Move { to } => {
                     f.write_fmt(format_args!("move [input_offset], [{to}]\n"))?
@@ -119,12 +118,101 @@ impl std::fmt::Display for InterpreteError {
 impl std::error::Error for InterpreteError {}
 
 /// Types which can be passed as stdin to [`Interpreter`]
-pub trait InterprIOIn: std::io::Read + std::fmt::Debug {}
+pub trait InterprIOIn: std::fmt::Debug {
+    /// Execute getchar bf instruction 
+    fn getchar(&mut self) -> std::io::Result<u8>;
+}
 /// Types which can be passed as stdout to [`Interpreter`]
-pub trait InterprIOOut: std::io::Write + std::fmt::Debug {}
+pub trait InterprIOOut: std::fmt::Debug {
+    /// Execute putchar bf instruction 
+    fn putchar(&mut self, ch: u8) -> std::io::Result<()>;
+    /// Flush output
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
 
-impl<T: std::io::Read + std::fmt::Debug> InterprIOIn for T {}
-impl<T: std::io::Write + std::fmt::Debug> InterprIOOut for T {}
+// default implementations
+impl<T: std::io::Read + std::fmt::Debug> InterprIOIn for T {
+    fn getchar(&mut self) -> std::io::Result<u8> {
+        let mut buf = [0u8];
+        self.read_exact(&mut buf)?;
+        Ok(buf[0])
+    }
+}
+impl<T: std::io::Write + std::fmt::Debug> InterprIOOut for T {
+    fn putchar(&mut self, ch: u8) -> std::io::Result<()> {
+        self.write_all(&[ch])
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flush()
+    }
+}
+
+/// Wrapper for output streams that help group bytes into utf-8 chars 
+#[derive(Debug)]
+pub struct DefaultWriter<T: std::io::Write + std::fmt::Debug> 
+{
+    inner: T,
+    buf: [u8; 8],
+    buf_i: usize
+}
+
+impl<T: std::io::Write + std::fmt::Debug> DefaultWriter<T> {
+    /// Create new writer
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            buf: [0; 8],
+            buf_i: 0
+        }
+    }
+
+    fn write_byte(&mut self, v: u8) -> std::io::Result<()> {
+        if v.is_ascii() {
+            if self.buf_i != 0 {
+                // ascii char can't be a valid continuation of utf-8 sequence 
+                self.force_write()?;
+            }
+            self.inner.write_all(&[v])
+        } else {
+            self.buf[self.buf_i] = v;
+            self.buf_i += 1;
+            self.try_write()
+        }
+    }
+
+    fn try_write(&mut self) -> std::io::Result<()> {
+        if self.buf_i == 7 || std::str::from_utf8(&self.buf[..self.buf_i]).is_ok() {
+            self.force_write()
+        } else {
+            Ok(())
+        }
+    }
+    fn force_write(&mut self) -> std::io::Result<()> {
+        if std::str::from_utf8(&self.buf[..self.buf_i]).is_ok() {
+            self.inner.write_all(&self.buf[..self.buf_i])?;
+        } else {
+            for _ in 0..self.buf_i {
+                self.inner.write_all(&[b' '])?; // fill with empty symbol instead of invalid utf-8
+            }
+        }
+        self.buf_i = 0;
+        Ok(())
+    }
+}
+
+impl<T: std::io::Write + std::fmt::Debug> InterprIOOut for DefaultWriter<T> {
+    fn putchar(&mut self, ch: u8) -> std::io::Result<()> {
+        self.write_byte(ch)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.force_write()?;
+        self.inner.flush()
+    }
+}
+
+// TODO default reader (read as chars and send as bytes)?
+
+// TODO ascii-only reader|writer?
 
 /// Interpreter
 #[derive(Debug)]
@@ -175,7 +263,7 @@ impl<'a> InterpreterBuilder<'a> {
     pub fn new() -> Self {
         Self {
             io_in: Box::from(std::io::stdin()),
-            io_out: Box::from(std::io::stdout()),
+            io_out: Box::from(DefaultWriter::new(std::io::stdout())),
         }
     }
     /// finish building [`Interpreter`] and return result

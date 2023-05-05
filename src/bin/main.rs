@@ -1,18 +1,14 @@
 use bf_tools::{
-    bf,
+    //bf,
     ins::BfCode,
     interpreter::{InterpCode, Interpreter},
-    optimizer::{passes::*, *},
+    optimizer::*, bf,
 };
 
 fn main() {
+
     //TODO add cli tools app?
-    //let ins: BfCode = bf!(
-    //    -[--->+<]>-.[---->+++++<]>-.+.++++++++++.+[---->+<]>+++.-[--->++<]>-.
-    //    ++++++++++.+[---->+<]>+++.[-->+++++++<]>.++.-------------.[--->+<]>---..
-    //    +++++.-[---->+<]>++.+[->+++<]>.++++++++++++..---.[-->+<]>--------.
-    //    [-]++++++++++.//[>+<]
-    //);
+    //let ins: BfCode = bf!();
     let ins: BfCode = include_str!("../../target/out.bf").parse().unwrap();
 
     //println!("chars_len: {}", ins.chars_len());
@@ -47,11 +43,13 @@ fn main() {
             //.set_stdout(&mut bf_output)
             .build();
         interpreter.run(ins).unwrap();
+        
+        println!("\ntape: {:?}", &interpreter.tape);
+        println!("\nptr: {:?}", &interpreter.data_pointer);
     }
 
     //println!("{}", std::str::from_utf8(&bf_output).unwrap_or_default());
     //println!("{:?}", &bf_output);
-    //println!("\ntape: {:?}", &interpreter.tape);
 
     //let mut interpreter = Interpreter::builder().build();
     //interpreter.run(ins).unwrap();
